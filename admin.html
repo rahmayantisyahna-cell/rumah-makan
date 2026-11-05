@@ -1062,10 +1062,57 @@ body.one.adm #u2{display:flex}
 <div class="scr" id="splash2"><img src="https://raw.githubusercontent.com/rahmayantisyahna-cell/rumah-makan/f8f9725fc249b7b168e9c4bf32e3ec750971eb86/ikon.png" alt="Logo" style="width:120px;height:120px;object-fit:cover;border-radius:50%;border:3px solid var(--go)"><div class="brand" style="font-size:24px;margin-top:10px">ADMIN RANCAK</div><div style="margin-top:6px">Kelola pesanan, menu &amp; laporan</div><div style="margin-top:4px;font-style:italic;color:#365A45">“Rancak Rasanyo, Lamak di Lidah.”</div></div>
 <div class="scr" id="app2"><div class="hd"><div class="hh"><img class="lgo" src="https://raw.githubusercontent.com/rahmayantisyahna-cell/rumah-makan/f8f9725fc249b7b168e9c4bf32e3ec750971eb86/ikon.png" alt="Logo"><div class="ht"><b class="brand">Admin Rancak</b><small>Kelola pesanan &amp; menu</small></div></div></div><div id="mn2"></div><div class="nav" id="nv2"></div><button class="hind" style="color:#292725" aria-label="Home" onclick="aHome()"></button></div>
 <button id="at2" class="on" aria-label="AssistiveTouch"><i></i></button><div id="atm2"><div id="atg2"></div></div><div id="dlg2"><div id="dlg2b"></div></div><div id="ts2" role="status"></div></div></div></div></div>
-<script>
+<script src="./firebase-config.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script>
       const ROLE = 'admin', TSID = 'ts2', PULL = ['orders', 'reviews', 'menu'];
       const KEEP = cur => Object.keys(cur).filter(k => !['orders', 'reviews', 'menu', 'tx', 'ops', 'arch'].includes(k));
-const g = i => document.getElementById(i);
+
+      // ===== FIREBASE: DATABASE & AUTH =====
+      const firebaseApp = firebase.initializeApp(window.APR_FIREBASE_CONFIG);
+      const db = firebase.firestore();
+      const auth = firebase.auth();
+      const appDataRef = db.collection('appData').doc('main');
+      let firebaseReady = false, firebaseApplying = false, firebaseUnsub = null;
+      function firebasePayload() {
+        return {
+          menu: P.map(p => ({id:p.id,name:p.name,cat:p.cat,price:p.price,pop:p.pop,stock:p.stock,out:p.out,cost:p.cost,desc:p.desc})),
+          orders: Array.isArray(S.orders) ? S.orders : [],
+          arch: Array.isArray(S.arch) ? S.arch : [],
+          tx: Array.isArray(S.tx) ? S.tx : [],
+          ops: Array.isArray(S.ops) ? S.ops : [],
+          reviews: Array.isArray(S.reviews) ? S.reviews : [],
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+      }
+      async function firebaseSave() {
+        if (!firebaseReady || firebaseApplying || !auth.currentUser) return;
+        try { await appDataRef.set(firebasePayload(), {merge:true}); }
+        catch(e) { console.error('Firebase save:',e); toast('Gagal menyimpan ke Firebase: '+(e.code||e.message)); }
+      }
+      function startFirebase() {
+        if (!auth.currentUser || firebaseUnsub) return;
+        firebaseUnsub = appDataRef.onSnapshot(async snap => {
+          if (!snap.exists) {
+            if (auth.currentUser) await appDataRef.set(firebasePayload(),{merge:true});
+            return;
+          }
+          const data=snap.data()||{};
+          firebaseApplying=true;
+          ['menu','orders','arch','tx','ops','reviews'].forEach(k=>{if(Array.isArray(data[k]))S[k]=data[k];});
+          if(Array.isArray(S.menu)&&S.menu.length) P=S.menu.filter(m=>m&&m.id&&m.name).map(m=>({...m,stock:Math.max(0,+m.stock||0),out:(+m.stock||0)<=0||m.out?1:0}));
+          S.orders=Array.isArray(S.orders)?S.orders:[];
+          S.arch=Array.isArray(S.arch)?S.arch:[];
+          S.tx=Array.isArray(S.tx)?S.tx:[];
+          S.ops=Array.isArray(S.ops)?S.ops:[];
+          S.reviews=Array.isArray(S.reviews)?S.reviews:[];
+          firebaseApplying=false; firebaseReady=true; onSync();
+        },err=>{firebaseReady=false;console.error('Firebase listener:',err);toast('Firebase gagal dibaca: '+(err.code||err.message));});
+      }
+
+      const g = i => document.getElementById(i);
       const rp = n => 'Rp' + n.toLocaleString('id-ID');
       const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
       
@@ -1183,13 +1230,9 @@ const g = i => document.getElementById(i);
 
       function save() {
         try {
-          S.menu = P.map(p => ({id: p.id, name: p.name, cat: p.cat, price: p.price, pop: p.pop, stock: p.stock, out: p.out, cost: p.cost, desc: p.desc}));
-          /* data milik halaman lain tidak ditimpa: ambil versi terbaru dari penyimpanan */
-          let cur = {}; try { cur = JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e) {}
-          KEEP(cur).forEach(k => { if (k in cur) S[k] = cur[k]; });
-          const raw = JSON.stringify(S);
-          localStorage.setItem(KEY, raw); LASTRAW = raw;
-        } catch(e) { toast('Penyimpanan lokal gagal'); }
+          S.menu=P.map(p=>({id:p.id,name:p.name,cat:p.cat,price:p.price,pop:p.pop,stock:p.stock,out:p.out,cost:p.cost,desc:p.desc}));
+          firebaseSave();
+        } catch(e) { toast('Penyimpanan gagal: '+e.message); }
       }
 
       function toast(t) {
@@ -1204,30 +1247,8 @@ const g = i => document.getElementById(i);
       /* ===== SINKRONISASI ANTAR HALAMAN (customer <-> admin lewat localStorage) ===== */
       const KEY = 'apr_v8', EVK = 'apr_evt';
       let LASTRAW = null;
-      function syncFrom() {
-        let raw; try { raw = localStorage.getItem(KEY); } catch(e) { return false; }
-        if (!raw || raw === LASTRAW) return false;
-        let cur; try { cur = JSON.parse(raw) || {}; } catch(e) { return false; }
-        LASTRAW = raw;
-        PULL.forEach(k => { if (k in cur) S[k] = cur[k]; });
-        if (Array.isArray(S.menu) && S.menu.length) P = S.menu.filter(m => m && m.id && m.name).map(m => ({...m, stock: Math.max(0, +m.stock || 0), out: (+m.stock || 0) <= 0 || m.out ? 1 : 0}));
-        S.orders = Array.isArray(S.orders) ? S.orders : [];
-        S.arch = Array.isArray(S.arch) ? S.arch : [];
-        S.tx = Array.isArray(S.tx) ? S.tx : [];
-        S.ops = Array.isArray(S.ops) ? S.ops : [];
-        S.reviews = Array.isArray(S.reviews) ? S.reviews : [];
-        return true;
-      }
-      function notify(to, d) {
-        try { localStorage.setItem(EVK, JSON.stringify(Object.assign({to, n: Date.now() + Math.random()}, d))); } catch(e) {}
-      }
-      addEventListener('storage', e => {
-        if (e.key === KEY || e.key === null) { if (syncFrom()) onSync(); }
-        else if (e.key === EVK && e.newValue) {
-          try { const d = JSON.parse(e.newValue); if (d.to === ROLE) { if (syncFrom()) onSync(); onEvt(d); } } catch(_) {}
-        }
-      });
-      setInterval(() => { if (syncFrom()) onSync(); }, 1500);
+      function syncFrom() { return false; }
+      function notify(to,d) { /* Firestore onSnapshot menyebarkan perubahan */ }
 
       function onSync() {
         aBadge();
@@ -1337,8 +1358,23 @@ const g = i => document.getElementById(i);
         document.querySelectorAll('#pgd2 i').forEach((x, k) => x.style.background = k === i ? '#fff' : 'rgba(255,255,255,.4)');
       }
       function aShow(n) { ['home2', 'splash2', 'app2'].forEach(i => g(i).classList.toggle('on', i === n)); g('at2').classList.toggle('on', n !== 'splash2'); g('atm2').classList.remove('on'); }
-      function aOpen() {
+      async function aOpen() {
         if (g('app2').classList.contains('on')) return aR();
+        try {
+          let user=auth.currentUser;
+          if(!user){
+            const email=prompt('Email admin Firebase:'); if(!email)return;
+            const password=prompt('Kata sandi admin:'); if(!password)return;
+            user=(await auth.signInWithEmailAndPassword(email.trim(),password)).user;
+          }
+          const roleSnap=await db.collection('users').doc(user.uid).get();
+          if(!roleSnap.exists||roleSnap.data().role!=='admin'){
+            await auth.signOut();alert('Akun ini bukan admin. Akses ditolak.');return;
+          }
+          startFirebase();
+          const shared=await appDataRef.get();
+          if(!shared.exists) await appDataRef.set(firebasePayload(),{merge:true});
+        }catch(e){console.error(e);alert('Login admin gagal: '+(e.message||e.code));return;}
         aShow('splash2');
         setTimeout(() => { if (g('splash2').classList.contains('on')) { aShow('app2'); aR(); } }, 1600);
       }
@@ -1596,7 +1632,11 @@ function aXls(){const b=new Blob(['\ufeff<html><head><meta charset="utf-8">'+aCs
         }).catch(() => {});
       }
 
-      load(); LASTRAW = localStorage.getItem(KEY);
+      load(); LASTRAW = null;
+      auth.onAuthStateChanged(user => {
+        if (user) startFirebase();
+        else if (firebaseUnsub) { firebaseUnsub(); firebaseUnsub=null; firebaseReady=false; }
+      });
       initIcons();
       tick();
       setInterval(tick, 15000);
