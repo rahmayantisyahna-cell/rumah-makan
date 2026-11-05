@@ -1157,10 +1157,57 @@ body.one.adm #u2{display:flex}
         </div>
       </div>
     </div></div></div>
-<script>
+<script src="./firebase-config.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script>
       const ROLE = 'cust', TSID = 'ts', PULL = ['orders', 'arch', 'reviews', 'menu', 'tx', 'ops'];
       const KEEP = cur => ['tx', 'ops', 'arch'];
-const g = i => document.getElementById(i);
+
+      // ===== FIREBASE: DATABASE & AUTH =====
+      const firebaseApp = firebase.initializeApp(window.APR_FIREBASE_CONFIG);
+      const db = firebase.firestore();
+      const auth = firebase.auth();
+      const appDataRef = db.collection('appData').doc('main');
+      let firebaseReady = false, firebaseApplying = false, firebaseUnsub = null;
+      function firebasePayload() {
+        return {
+          menu: P.map(p => ({id:p.id,name:p.name,cat:p.cat,price:p.price,pop:p.pop,stock:p.stock,out:p.out,cost:p.cost,desc:p.desc})),
+          orders: Array.isArray(S.orders) ? S.orders : [],
+          arch: Array.isArray(S.arch) ? S.arch : [],
+          tx: Array.isArray(S.tx) ? S.tx : [],
+          ops: Array.isArray(S.ops) ? S.ops : [],
+          reviews: Array.isArray(S.reviews) ? S.reviews : [],
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+      }
+      async function firebaseSave() {
+        if (!firebaseReady || firebaseApplying || !auth.currentUser) return;
+        try { await appDataRef.set(firebasePayload(), {merge:true}); }
+        catch(e) { console.error('Firebase save:',e); toast('Gagal menyimpan ke Firebase: '+(e.code||e.message)); }
+      }
+      function startFirebase() {
+        if (!auth.currentUser || firebaseUnsub) return;
+        firebaseUnsub = appDataRef.onSnapshot(async snap => {
+          if (!snap.exists) {
+            if (auth.currentUser) await appDataRef.set(firebasePayload(),{merge:true});
+            return;
+          }
+          const data=snap.data()||{};
+          firebaseApplying=true;
+          ['menu','orders','arch','tx','ops','reviews'].forEach(k=>{if(Array.isArray(data[k]))S[k]=data[k];});
+          if(Array.isArray(S.menu)&&S.menu.length) P=S.menu.filter(m=>m&&m.id&&m.name).map(m=>({...m,stock:Math.max(0,+m.stock||0),out:(+m.stock||0)<=0||m.out?1:0}));
+          S.orders=Array.isArray(S.orders)?S.orders:[];
+          S.arch=Array.isArray(S.arch)?S.arch:[];
+          S.tx=Array.isArray(S.tx)?S.tx:[];
+          S.ops=Array.isArray(S.ops)?S.ops:[];
+          S.reviews=Array.isArray(S.reviews)?S.reviews:[];
+          firebaseApplying=false; firebaseReady=true; onSync();
+        },err=>{firebaseReady=false;console.error('Firebase listener:',err);toast('Firebase gagal dibaca: '+(err.code||err.message));});
+      }
+
+      const g = i => document.getElementById(i);
       const rp = n => 'Rp' + n.toLocaleString('id-ID');
       const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
       
@@ -1278,13 +1325,9 @@ const g = i => document.getElementById(i);
 
       function save() {
         try {
-          S.menu = P.map(p => ({id: p.id, name: p.name, cat: p.cat, price: p.price, pop: p.pop, stock: p.stock, out: p.out, cost: p.cost, desc: p.desc}));
-          /* data milik halaman lain tidak ditimpa: ambil versi terbaru dari penyimpanan */
-          let cur = {}; try { cur = JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e) {}
-          KEEP(cur).forEach(k => { if (k in cur) S[k] = cur[k]; });
-          const raw = JSON.stringify(S);
-          localStorage.setItem(KEY, raw); LASTRAW = raw;
-        } catch(e) { toast('Penyimpanan lokal gagal'); }
+          S.menu=P.map(p=>({id:p.id,name:p.name,cat:p.cat,price:p.price,pop:p.pop,stock:p.stock,out:p.out,cost:p.cost,desc:p.desc}));
+          firebaseSave();
+        } catch(e) { toast('Penyimpanan gagal: '+e.message); }
       }
 
       function toast(t) {
@@ -1299,30 +1342,8 @@ const g = i => document.getElementById(i);
       /* ===== SINKRONISASI ANTAR HALAMAN (customer <-> admin lewat localStorage) ===== */
       const KEY = 'apr_v8', EVK = 'apr_evt';
       let LASTRAW = null;
-      function syncFrom() {
-        let raw; try { raw = localStorage.getItem(KEY); } catch(e) { return false; }
-        if (!raw || raw === LASTRAW) return false;
-        let cur; try { cur = JSON.parse(raw) || {}; } catch(e) { return false; }
-        LASTRAW = raw;
-        PULL.forEach(k => { if (k in cur) S[k] = cur[k]; });
-        if (Array.isArray(S.menu) && S.menu.length) P = S.menu.filter(m => m && m.id && m.name).map(m => ({...m, stock: Math.max(0, +m.stock || 0), out: (+m.stock || 0) <= 0 || m.out ? 1 : 0}));
-        S.orders = Array.isArray(S.orders) ? S.orders : [];
-        S.arch = Array.isArray(S.arch) ? S.arch : [];
-        S.tx = Array.isArray(S.tx) ? S.tx : [];
-        S.ops = Array.isArray(S.ops) ? S.ops : [];
-        S.reviews = Array.isArray(S.reviews) ? S.reviews : [];
-        return true;
-      }
-      function notify(to, d) {
-        try { localStorage.setItem(EVK, JSON.stringify(Object.assign({to, n: Date.now() + Math.random()}, d))); } catch(e) {}
-      }
-      addEventListener('storage', e => {
-        if (e.key === KEY || e.key === null) { if (syncFrom()) onSync(); }
-        else if (e.key === EVK && e.newValue) {
-          try { const d = JSON.parse(e.newValue); if (d.to === ROLE) { if (syncFrom()) onSync(); onEvt(d); } } catch(_) {}
-        }
-      });
-      setInterval(() => { if (syncFrom()) onSync(); }, 1500);
+      function syncFrom() { return false; }
+      function notify(to,d) { /* Firestore onSnapshot menyebarkan perubahan */ }
 
       function onSync() {
         const a = document.activeElement;
@@ -1427,37 +1448,45 @@ const g = i => document.getElementById(i);
         setTimeout(() => { if (g('splash').classList.contains('on')) setScr('app'); }, 1600);
       }
 
-      function handleAppAuth() {
-        const phone = (g('appAuthPhone')?.value || '').replace(/[\s-]/g, '');
-        const pass = (g('appAuthPass')?.value || '').trim();
-        const name = g('appRegName') ? g('appRegName').value.trim() : '';
-
-        if (!phone || !pass) return toast('Nomor telepon dan kata sandi wajib diisi.');
-
-        if (authTab === 'register') {
-          if (!name) return toast('Nama lengkap wajib diisi.');
-          if (S.users.some(u => u.phone === phone)) return toast('Nomor telepon sudah terdaftar.');
-          const newUser = {name, phone, pass};
-          S.users.push(newUser);
-          S.currentUser = newUser;
-          save();
-          toast('Akun berhasil dibuat!');
-          V = {n: 'home'};
-          rApp(1);
-        } else {
-          const found = S.users.find(u => u.phone === phone && u.pass === pass);
-          if (!found) return toast('No telp atau kata sandi salah.');
-          S.currentUser = found;
-          save();
-          toast('Selamat datang, ' + found.name + '!');
-          V = {n: 'home'};
-          rApp(1);
+      async function handleAppAuth() {
+        const phone=(g('appAuthPhone')?.value||'').replace(/[\s-]/g,'');
+        const pass=(g('appAuthPass')?.value||'').trim();
+        const name=g('appRegName')?g('appRegName').value.trim():'';
+        if(!phone||!pass)return toast('Nomor telepon dan kata sandi wajib diisi.');
+        if(!/^[0-9]{9,15}$/.test(phone))return toast('Nomor telepon harus 9–15 digit.');
+        if(pass.length<6)return toast('Kata sandi minimal 6 karakter.');
+        const email=phone+'@pelanggan.apr.com';
+        try {
+          let credential;
+          if(authTab==='register'){
+            if(!name)return toast('Nama lengkap wajib diisi.');
+            credential=await auth.createUserWithEmailAndPassword(email,pass);
+            const profile={name,phone,role:'customer',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+            await db.collection('users').doc(credential.user.uid).set(profile);
+            S.currentUser={name,phone,uid:credential.user.uid};
+            toast('Akun berhasil dibuat!');
+          } else {
+            credential=await auth.signInWithEmailAndPassword(email,pass);
+            const profileSnap=await db.collection('users').doc(credential.user.uid).get();
+            if(!profileSnap.exists||profileSnap.data().role!=='customer'){await auth.signOut();return toast('Profil pelanggan tidak ditemukan.');}
+            const profile=profileSnap.data();
+            S.currentUser={name:profile.name,phone:profile.phone,uid:credential.user.uid};
+            toast('Selamat datang, '+profile.name+'!');
+          }
+          V={n:'home'};rApp(1);
+        } catch(e) {
+          console.error(e);
+          const msg=e.code==='auth/email-already-in-use'?'Nomor telepon sudah terdaftar.':
+            ['auth/invalid-credential','auth/wrong-password','auth/user-not-found'].includes(e.code)?'Nomor telepon atau kata sandi salah.':
+            e.code==='auth/weak-password'?'Kata sandi minimal 6 karakter.':(e.message||'Gagal masuk.');
+          toast(msg);
         }
       }
 
       function logoutUser() {
-        ask('Keluar dari akun?', () => {
+        ask('Keluar dari akun?', async () => {
           S.currentUser = null;
+          await auth.signOut();
           save();
           V = {n: 'auth'};
           rApp(1);
@@ -2241,7 +2270,21 @@ const g = i => document.getElementById(i);
         }).catch(() => {});
       }
 
-      load(); LASTRAW = localStorage.getItem(KEY);
+      load(); LASTRAW = null; startFirebase();
+      auth.onAuthStateChanged(async user=>{
+        if(!user){S.currentUser=null;if(firebaseUnsub){firebaseUnsub();firebaseUnsub=null;firebaseReady=false;}return;}
+        startFirebase();
+        try{
+          const shared=await appDataRef.get();
+          if(!shared.exists) await appDataRef.set(firebasePayload(),{merge:true});
+          const snap=await db.collection('users').doc(user.uid).get();
+          if(snap.exists&&snap.data().role==='customer'){
+            const p=snap.data();S.currentUser={name:p.name,phone:p.phone,uid:user.uid};
+            if(typeof rApp==='function'&&V&&V.n==='auth'){V={n:'home'};rApp(1);}
+          }
+        }catch(e){console.warn('Pemulihan sesi pelanggan:',e);}
+      });
+
       initPhone();
       initAT();
       initBat();
